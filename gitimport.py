@@ -3,6 +3,7 @@ import pygit2
 import os.path
 from importlib.machinery import ModuleSpec
 from importlib.abc import PathEntryFinder, Loader
+import contextlib
 
 GIT_REVISION_SEPARATOR = "@"
 PACKAGE_SUFFIX = '/__init__.py'
@@ -62,7 +63,7 @@ class gitimporter(PathEntryFinder):
         try:
             path = tail_modulename + PACKAGE_SUFFIX
             tree_entry = self.get_tree_entry(path)
-            if tree_entry.type == 'blob':
+            if isinstance(tree_entry, pygit2.Blob):
                 spec = ModuleSpec(modulename,
                                   GitLoader(tree_entry, self.repo, self.commit_sha),
                                   is_package=True,
@@ -76,7 +77,7 @@ class gitimporter(PathEntryFinder):
         try:
             path = tail_modulename + SOURCE_SUFFIX
             tree_entry = self.get_tree_entry(path)
-            if tree_entry.type == 'blob':
+            if isinstance(tree_entry, pygit2.Blob):
                 return ModuleSpec(modulename, GitLoader(tree_entry, self.repo, self.commit_sha), origin=path)
         except KeyError:
             pass
@@ -135,3 +136,14 @@ def add_repository_to_path(repo, rev='HEAD', in_repo_path=''):
     """
     add_gitimporter_path_hook()
     sys.path.insert(0, repository_path(repo, rev, in_repo_path))
+
+@contextlib.contextmanager
+def modules_from_git(rev="HEAD", repo=".", in_repo_path=""):
+    old_modules = {**sys.modules}
+    sys.modules.clear()
+    path = add_repository_to_path(repo, rev, in_repo_path)
+    yield
+    sys.path.remove(path)
+    sys.path_hooks.remove(gitimporter)
+    sys.modules.clear()
+    sys.modules.update(old_modules)
