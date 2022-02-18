@@ -1,7 +1,7 @@
 from setuptools import setup, Extension
 
 setup(
-    name='gitimport',
+    name='gitimport2',
     description='Import python packages directly from a git repository',
     long_description='',
     author='Matthias Bartelmeß',
