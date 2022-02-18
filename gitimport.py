@@ -135,7 +135,9 @@ def add_repository_to_path(repo, rev='HEAD', in_repo_path=''):
     :return:
     """
     add_gitimporter_path_hook()
-    sys.path.insert(0, repository_path(repo, rev, in_repo_path))
+    path = repository_path(repo, rev, in_repo_path)
+    sys.path.insert(0, path)
+    return path
 
 @contextlib.contextmanager
 def modules_from_git(rev="HEAD", repo=".", in_repo_path=""):
