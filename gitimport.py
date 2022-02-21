@@ -1,4 +1,6 @@
 import sys
+
+init_modules = sys.modules.copy()
 import pygit2
 import os.path
 from importlib.machinery import ModuleSpec
@@ -6,47 +8,22 @@ from importlib.abc import PathEntryFinder, Loader
 import contextlib
 
 GIT_REVISION_SEPARATOR = "@"
-PACKAGE_SUFFIX = '/__init__.py'
-SOURCE_SUFFIX = '.py'
+PACKAGE_SUFFIX = "/__init__.py"
+SOURCE_SUFFIX = ".py"
 
-class GitPathNotFoundError(Exception): pass
 
-class GitImportError(ImportError): pass
+class GitImporter(PathEntryFinder):
+    def __init__(self, repo_path: str):
+        self.repo_path = repo_path
 
-def split_git_path(path):
-    in_repo_path = ''
-    while True:
-
-        if len(path) == 0: break
+        print(repo_path)
 
         try:
-            git_repo, commit_sha = path.split(GIT_REVISION_SEPARATOR, 1)
-        except ValueError:
-            # In case the path does not contain a GIT_REVISION_SEPARATOR
-            break
-
-        if os.path.isdir(git_repo)  and not os.path.isdir(path):
-            try:
-                commit = pygit2.Repository(git_repo)[commit_sha]
-                return git_repo, commit_sha, in_repo_path
-            except ValueError:
-                pass
-
-        path, rest = os.path.split(path)
-        in_repo_path = os.path.join(rest, in_repo_path)
-
-    raise GitPathNotFoundError
-
-
-class gitimporter(PathEntryFinder):
-    def __init__(self, repopath):
-        self.repopath = repopath
-
-        try:
-            self.repo_basepath, self.commit_sha, self.in_repo_path = split_git_path(repopath)
+            self.repo_basepath, self.commit_sha, self.in_repo_path = split_git_path(
+                repo_path
+            )
         except GitPathNotFoundError:
             raise GitImportError("Git path not found")
-
 
         try:
             self.repo = pygit2.Repository(self.repo_basepath)
@@ -54,33 +31,41 @@ class gitimporter(PathEntryFinder):
         except ValueError as e:
             raise GitImportError("Error importing Repository")
 
-    def get_tree_entry(self, key):
-        return self.commit.tree[os.path.join(self.in_repo_path, key)]
-
     def find_spec(self, modulename, target):
-        tail_modulename = modulename.rpartition('.')[2]
+        tail_modulename = modulename.rpartition(".")[2]
 
         try:
             path = tail_modulename + PACKAGE_SUFFIX
-            tree_entry = self.get_tree_entry(path)
+            tree_entry = self._get_tree_entry(path)
             if isinstance(tree_entry, pygit2.Blob):
-                spec = ModuleSpec(modulename,
-                                  GitLoader(tree_entry, self.repo, self.commit_sha),
-                                  is_package=True,
-                                  origin=path)
+                spec = ModuleSpec(
+                    modulename,
+                    GitLoader(tree_entry, self.repo, self.commit_sha),
+                    is_package=True,
+                    origin=path,
+                )
 
-                spec.submodule_search_locations = [os.path.join(self.repopath, tail_modulename)]
+                spec.submodule_search_locations = [
+                    os.path.join(self.repo_path, tail_modulename)
+                ]
                 return spec
         except KeyError:
             pass
 
         try:
             path = tail_modulename + SOURCE_SUFFIX
-            tree_entry = self.get_tree_entry(path)
+            tree_entry = self._get_tree_entry(path)
             if isinstance(tree_entry, pygit2.Blob):
-                return ModuleSpec(modulename, GitLoader(tree_entry, self.repo, self.commit_sha), origin=path)
+                return ModuleSpec(
+                    modulename,
+                    GitLoader(tree_entry, self.repo, self.commit_sha),
+                    origin=path,
+                )
         except KeyError:
             pass
+
+    def _get_tree_entry(self, key):
+        return self.commit.tree[os.path.join(self.in_repo_path, key)]
 
 
 class GitLoader(Loader):
@@ -98,15 +83,49 @@ class GitLoader(Loader):
         exec(self.get_code(), module.__dict__)
 
 
+class GitPathNotFoundError(Exception):
+    pass
+
+
+class GitImportError(ImportError):
+    pass
+
+
+def split_git_path(path):
+    in_repo_path = ""
+    while True:
+
+        if len(path) == 0:
+            break
+
+        try:
+            git_repo, commit_sha = path.split(GIT_REVISION_SEPARATOR, 1)
+        except ValueError:
+            # In case the path does not contain a GIT_REVISION_SEPARATOR
+            break
+
+        if os.path.isdir(git_repo) and not os.path.isdir(path):
+            try:
+                commit = pygit2.Repository(git_repo)[commit_sha]
+                return git_repo, commit_sha, in_repo_path
+            except ValueError:
+                pass
+
+        path, rest = os.path.split(path)
+        in_repo_path = os.path.join(rest, in_repo_path)
+
+    raise GitPathNotFoundError
+
+
 def add_gitimporter_path_hook():
     """
     Add gitimport to sys.path_hooks.
     """
-    if gitimporter not in sys.path_hooks:
-        sys.path_hooks.append(gitimporter)
+    if GitImporter not in sys.path_hooks:
+        sys.path_hooks.append(GitImporter)
 
 
-def repository_path(repo, rev='HEAD', in_repo_path=''):
+def repository_path(repo, rev="HEAD", in_repo_path=""):
     """
     Build a path (for further use in sys.path) from a repository reference
 
@@ -120,10 +139,11 @@ def repository_path(repo, rev='HEAD', in_repo_path=''):
     if isinstance(repo, str):
         repo = pygit2.Repository(repo)
 
-    path = '{}@{}'.format(repo.path, repo.revparse_single(rev).hex)
+    path = "{}@{}".format(repo.path, repo.revparse_single(rev).hex)
     return os.path.join(path, in_repo_path)
 
-def add_repository_to_path(repo, rev='HEAD', in_repo_path=''):
+
+def add_repository_to_path(repo, rev="HEAD", in_repo_path=""):
     """
     Adds a repository reference to sys.path. If gitimporter is not initialized yet, it will also be added to
     sys.path_hooks
@@ -139,13 +159,19 @@ def add_repository_to_path(repo, rev='HEAD', in_repo_path=''):
     sys.path.insert(0, path)
     return path
 
+
 @contextlib.contextmanager
 def modules_from_git(rev="HEAD", repo=".", in_repo_path=""):
-    old_modules = {**sys.modules}
+    current_modules = sys.modules.copy()
     sys.modules.clear()
+    sys.modules.update(init_modules)
     path = add_repository_to_path(repo, rev, in_repo_path)
-    yield
+    
+    final_modules = {}
+    yield final_modules
+    
     sys.path.remove(path)
-    sys.path_hooks.remove(gitimporter)
+    sys.path_hooks.remove(GitImporter)
+    final_modules.update(sys.modules)
     sys.modules.clear()
-    sys.modules.update(old_modules)
+    sys.modules.update(current_modules)
